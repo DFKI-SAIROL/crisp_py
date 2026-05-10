@@ -58,6 +58,7 @@ class Gripper:
         self._value = None
         self._torque = None
         self._target = None
+        self._goal_pending = False  # used only for gripper_command_action
         self._index = self.config.index
         self._callback_monitor = CallbackMonitor(
             self.node, stale_threshold=self.config.max_joint_delay
@@ -275,16 +276,14 @@ class Gripper:
                 raise RuntimeError("Command action client is not initialized.")
 
             goal = GripperCommand.Goal()
-            goal.command.position = self._unnormalize(
-                self.value
-                + np.clip(
-                    self._normalize(self._target) - self.value,
-                    -self.config.max_delta,
-                    self.config.max_delta,
-                )
-            )
+            goal.command.position = self._target
             goal.command.max_effort = self.config.max_effort
-            self._command_action_client.send_goal_async(goal)
+            # Only send if a new target was explicitly requested.
+            # Without this guard the 30Hz timer spams goals which causes
+            # the Franka server to abort every in-progress motion.
+            if self._goal_pending:
+                self._command_action_client.send_goal_async(goal)
+                self._goal_pending = False
             return
 
         if self._command_publisher is None:
@@ -325,6 +324,7 @@ class Gripper:
             f"The target should be normalized between 0 and 1, but is currently {target}"
         )
         self._target = self._unnormalize(target)
+        self._goal_pending = True
 
     def _normalize(self, unormalized_value: float) -> float:
         """Normalize a raw value between 0.0 and 1.0."""
